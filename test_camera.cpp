@@ -11,56 +11,42 @@ int main(int argc, char* argv[])
         return -1;
     }
     char* base = argv[1];
-    int slen = strlen(base);
-    char* ext = argv[1] + slen - 3;
-    char basename[1024];
-    strncpy(basename, base, slen - 4);
-    
+
     C328 dev("/dev/ttyS4");
+    dev.set_debug(true);
     dev.sync();
     if (dev.is_connected())
     {
         std::cerr << "Connected to camera\n";
-        dev.setup();
+        dev.initial();
         std::cerr << "setup done\n";
         dev.set_pkg_size();
         std::cerr << "set pkg size done\n";
         for (int i=0; i<100; i++)
         {
-            dev.snapshot();
-            uint8_t pixtype;
-            uint32_t datasz;
-            dev.get_picture(&pixtype, &datasz);
-            if (pixtype == 0)
-            {
-                std::cerr << "Error during get picture\n";
-                return 1;
-            }
-            //std::cerr << "Pixtype: " << static_cast<int>(pixtype) << " size: " << datasz << std::endl;
-
-            uint8_t* pixbuf = new uint8_t[datasz];
-
-            dev.get_data_packages(datasz, pixbuf);
-
+            auto result = dev.jpeg_snapshot();
+            if (result.first == 0)
+                continue;
+            
             // open the file
             char fname[1024];
-            snprintf(fname, 1024, "%s%02d.%s", base, i, ext);
+            snprintf(fname, 1024, "%s%02d.jpg", base, i);
             
-            FILE* f = fopen(argv[1], "w");
+            FILE* f = fopen(fname, "w");
             if (f == nullptr)
             {
                 std::cerr << "Unable to open file: '" << argv[1] << "' for write" << std::endl;
                 return -1;
             }
                 // write the file
-            size_t n = fwrite(pixbuf, 1, datasz, f);
-            if (n != datasz)
+            size_t n = fwrite(result.second, 1, result.first, f);
+            if (n != result.first)
             {
                 std::cerr << "Error " << errno << " during write of file: " << strerror(errno) << std::endl;
             }
             fclose(f);
         
-            delete [] pixbuf;
+            delete [] result.second;
         }
         
         return 0;

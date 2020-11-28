@@ -11,7 +11,7 @@
 using namespace std;
 
 C328::C328(const string& serport)
-    : _serial_port(-1), _is_sync(false)
+    : _serial_port(-1), _is_sync(false), _debug(false)
 {
     _serial_port = open(serport.c_str(), O_RDWR);
     if (_serial_port < 0)
@@ -79,7 +79,7 @@ void C328::close_port()
     _is_sync = false;
 }
 
-bool C328::write_pkt(const C328CommandPacket& pkt, bool debug)
+bool C328::write_pkt(const C328CommandPacket& pkt)
 {
     ssize_t n = write(_serial_port, pkt.packet(), 6);
     if (n < 0)
@@ -94,7 +94,7 @@ bool C328::write_pkt(const C328CommandPacket& pkt, bool debug)
         close_port();
         return false;
     }
-    if (debug)
+    if (_debug)
         pkt.debug(true);
     return true;
 }
@@ -118,12 +118,12 @@ bool C328::read_bytes(uint8_t* buf, ssize_t nbytes)
     return true;
 }
 
-std::pair<C328CommandPacket,bool> C328::read_pkt(bool debug)
+std::pair<C328CommandPacket,bool> C328::read_pkt()
 {
     uint8_t buf[6];
     bool ret = read_bytes(buf, 6);
     C328CommandPacket pkt(buf);
-    if (debug)
+    if (_debug)
         pkt.debug(false);
     return make_pair(pkt, ret);
 }
@@ -151,11 +151,7 @@ void C328::reset(bool state_only)
     if (_serial_port < 0)
         return;
 
-    uint8_t resetd[6] = {0xAA, 0x08, 0x00, 0x00, 0x00, 0xFF};
-    if (state_only)
-        resetd[2] = 0x01;
-    
-    C328CommandPacket resetpkt(resetd);
+    C328CommandPacket resetpkt(0x08, state_only ? 0x01 : 0x00, 0x00, 0x00, 0xFF);
     if (!write_pkt(resetpkt))
         return;
 
@@ -172,8 +168,7 @@ void C328::sync()
     if (_serial_port < 0)
         return;
 
-    uint8_t syncd[6] = {0xAA, 0x0D, 0x00, 0x00, 0x00, 0x00};
-    C328CommandPacket sync(syncd);
+    C328CommandPacket sync(0x0D, 0x00, 0x00, 0x00, 0x00);
     for (int i=0; i<500; i++)
     {
         if (!write_pkt(sync))
@@ -186,39 +181,49 @@ void C328::sync()
             return;
         }
     }
-    // read the reply, if there is one, could timeout
-    auto ackval = read_pkt(true);
+    // read the reply
+    auto ackval = read_pkt();
     if (!ackval.second || !ackval.first.is_ack())
     {
         cerr << "Camera did not send ack packet" << endl;
         return;
     }
     // now read the sync
-    auto syncval = read_pkt(true);
-    // sometimes an ack instead of a sync is sent
-    if (!syncval.second || (!syncval.first.is_sync() && !syncval.first.is_ack()))
+    auto syncval = read_pkt();
+    if (!syncval.second || !syncval.first.is_sync())
     {
         cerr << "Camera did not send sync packet" << endl;
         return;
     }
+    // ack the sync
+    C328CommandPacket ack(0x0E, 0x0D, ackval.first.packet()[3], 0x00, 0x00);
+    if (!write_pkt(ack))
+        return;
     _is_sync = true;
+
+    // sleep for 2s to let camera stabilize
+    if (usleep(2000000) != 0)
+    {
+        cerr << "Error " << errno << " during sleep: " << strerror(errno) << endl;
+        close_port();
+        return;
+    }
 }
 
-void C328::setup()
+void C328::initial()
 {
     if (_serial_port < 0)
         return;
 
-    uint8_t setd[6] = {0xAA, 0x01, 0x00, 0x01, 0x03, 0x05};
-    C328CommandPacket set(setd);
-    if (!write_pkt(set, true))
+    C328CommandPacket ini(0x01, 0x00, 0x01, 0x03, 0x05);
+    if (!write_pkt(ini))
         return;
 
     // read the reply
-    auto ackval = read_pkt(true);
+    auto ackval = read_pkt();
     if (!ackval.second || !ackval.first.is_ack())
     {
-        cerr << "Camera did not send ack setup command" << endl;
+        cerr << "Camera did not ack initial command" << endl;
         return;
     }
 }
@@ -229,13 +234,12 @@ void C328::set_pkg_size()
         return;
 
     // data package size = 512b
-    uint8_t setpkg[6] = {0xAA, 0x06, 0x08, 0x00, 0x02, 0x00};
-    C328CommandPacket setpkgsize(setpkg);
-    if (!write_pkt(setpkgsize, true))
+    C328CommandPacket setpkgsize(0x06, 0x08, 0x00, 0x02, 0x00);
+    if (!write_pkt(setpkgsize))
         return;
 
     // read the reply
-    auto ackval = read_pkt(true);
+    auto ackval = read_pkt();
     if (!ackval.second || !ackval.first.is_ack())
     {
         cerr << "Camera did not ack set package size command" << endl;
@@ -248,16 +252,15 @@ void C328::snapshot()
     if (_serial_port < 0)
         return;
 
-    uint8_t snapd[6] = {0xAA, 0x05, 0x00, 0x00, 0x00, 0x00};
-    C328CommandPacket snap(snapd);
+    C328CommandPacket snap(0x05, 0x00, 0x00, 0x00, 0x00);
     // loop until camera succesfully takes snapshot
     while (true)
     {
-        if (!write_pkt(snap, true))
+        if (!write_pkt(snap))
             return;
 
         // read the reply
-        auto ackval = read_pkt(true);
+        auto ackval = read_pkt();
         auto retpkt = ackval.first;
         if (!ackval.second)
         {
@@ -291,18 +294,17 @@ void C328::get_picture(uint8_t* pixtype, uint32_t* datasz)
     *pixtype = 0;
     *datasz = 0;
     
-    uint8_t gpixd[6] = {0xAA, 0x04, 0x01, 0x00, 0x00, 0x00};
-    C328CommandPacket gpix(gpixd);
+    C328CommandPacket gpix(0x04, 0x01, 0x00, 0x00, 0x00);
     while (true)
     {
         // loop until camera is ready to return picture
         while (true)
         {
-            if (!write_pkt(gpix, true))
+            if (!write_pkt(gpix))
                 return;
 
             // read the reply
-            auto ackval = read_pkt(true);
+            auto ackval = read_pkt();
             auto retpkt = ackval.first;
             if (!ackval.second)
             {
@@ -327,7 +329,7 @@ void C328::get_picture(uint8_t* pixtype, uint32_t* datasz)
             }
         }
         // now get data
-        auto datval = read_pkt(true);
+        auto datval = read_pkt();
         if (!datval.second)
         {
             cerr << "Camera failed to send data packet" << endl;
@@ -367,11 +369,8 @@ void C328::get_data_packages(uint32_t datasz, uint8_t* pixbuf)
     uint8_t buf[512];
     while (true)
     {
-        uint8_t pkgackd[6] = {0xAA, 0x0E, 0x00, 0x00, 0x00, 0x00};
-        pkgackd[4] = (count & 0xFF);
-        pkgackd[5] = (count & 0xFF00) >> 8;
-        C328CommandPacket pkgack(pkgackd);
-        if (!write_pkt(pkgack, true))
+        C328CommandPacket pkgack(0x0E, 0x00, 0x00, (count & 0xFF), (count & 0xFF00) >> 8);
+        if (!write_pkt(pkgack))
             return;
         // read header
         if (!read_bytes(buf, 4))
@@ -406,9 +405,8 @@ void C328::get_data_packages(uint32_t datasz, uint8_t* pixbuf)
         count++;
     }
     // send final ack
-    uint8_t ackd[6] = {0xAA, 0x0E, 0x0A, 0x00, 0x00, 0x00};
-    C328CommandPacket ack(ackd);
-    write_pkt(ack, true);
+    C328CommandPacket ack(0x0E, 0x00, 0x00, 0xF0, 0xF0);
+    write_pkt(ack);
 }
 
 bool C328::is_connected() const
@@ -416,3 +414,40 @@ bool C328::is_connected() const
     return _serial_port >= 0 && _is_sync;
 }
 
+std::pair<uint32_t, uint8_t*> C328::jpeg_snapshot()
+{
+    snapshot();
+
+    uint8_t pixtype;
+    uint32_t datasz;
+
+    get_picture(&pixtype, &datasz);
+    if (pixtype == 0)
+    {
+        std::cerr << "Error during get picture\n";
+        return make_pair(0, nullptr);
+    }
+    //std::cerr << "Pixtype: " << static_cast<int>(pixtype) << " size: " << datasz << std::endl;
+
+    // allocate a buffer to hold the pix
+    uint8_t* pixbuf = new uint8_t[datasz];
+
+    get_data_packages(datasz, pixbuf);
+    
+    return make_pair(datasz, pixbuf);
+}
+
+std::pair<uint32_t, uint8_t*> C328::uncompressed_snapshot()
+{
+    return make_pair(0, nullptr);
+}
+
+std::pair<uint32_t, uint8_t*> C328::jpeg_preview()
+{
+    return make_pair(0, nullptr);
+}
+
+std::pair<uint32_t, uint8_t*> C328::uncompressed_preview()
+{
+    return make_pair(0, nullptr);
+}

@@ -4,6 +4,16 @@
 
 using namespace std;
 
+C328CommandPacket::C328CommandPacket(uint8_t b2, uint8_t b3, uint8_t b4, uint8_t b5, uint8_t b6)
+{
+    _data[0] = 0xAA;
+    _data[1] = b2;
+    _data[2] = b3;
+    _data[3] = b4;
+    _data[4] = b5;
+    _data[5] = b6;
+}
+
 C328CommandPacket::C328CommandPacket(const uint8_t* buf)
 {
     memcpy(_data, buf, 6);

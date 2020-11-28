@@ -49,6 +49,7 @@ class C328CommandPacket
 {
 public:
     C328CommandPacket() = default;
+    explicit C328CommandPacket(uint8_t b2, uint8_t b3, uint8_t b4, uint8_t b5, uint8_t b6);
     explicit C328CommandPacket(const uint8_t* buf);
     ~C328CommandPacket() {;}
 
