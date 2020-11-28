@@ -18,7 +18,7 @@ int main(int argc, char* argv[])
     if (dev.is_connected())
     {
         std::cerr << "Connected to camera\n";
-        dev.initial();
+        dev.initial(FourBitGrayScale, P160x120, J320x240);
         std::cerr << "setup done\n";
         dev.set_pkg_size();
         std::cerr << "set pkg size done\n";

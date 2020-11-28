@@ -146,21 +146,49 @@ bool C328::has_recvd_bytes() const
     return (select(_serial_port + 1, &readfds, NULL, NULL, &timeout) == 1);
 }
 
-void C328::reset(bool state_only)
+// implements basic pattern, where a command is sent and an ack is received
+bool C328::command_response(const C328CommandPacket& cmdpkt)
 {
     if (_serial_port < 0)
-        return;
+        return false;
+    if (!write_pkt(cmdpkt))
+        return false;
+    // read the reply
+    auto ackval = read_pkt();
+    if (!ackval.second)
+    {
+        cerr << "Camera did not ack packet" << endl;
+        return false;
+    }
+    else if (!ackval.first.is_ack() && ackval.first.is_nak())
+    {
+        struct NakFields nf;
+        ackval.first.nak_fields(&nf);
+        cerr << "Camera error[" << nf.errcode << "] :" << ackval.first.nak_error() << endl;
+        return false;
+    }
+    
+    return true;
+}
 
+void C328::reset(bool state_only)
+{
     C328CommandPacket resetpkt(0x08, state_only ? 0x01 : 0x00, 0x00, 0x00, 0xFF);
-    if (!write_pkt(resetpkt))
+    if (!command_response(resetpkt))
         return;
-
     if (usleep(2000000) != 0)
     {
         cerr << "Error " << errno << " during sleep: " << strerror(errno) << endl;
         close_port();
         return;
     }
+}
+
+void C328::power_off()
+{
+    C328CommandPacket pwrpkt(0x09, 0x00, 0x00, 0x00, 0x00);
+    if (!command_response(pwrpkt))
+        return;
 }
 
 void C328::sync()
@@ -210,12 +238,14 @@ void C328::sync()
     }
 }
 
-void C328::initial()
+void C328::initial(enum ColorType ct, enum PreviewResolution pr, enum JPEGResolution jr)
 {
     if (_serial_port < 0)
         return;
 
-    C328CommandPacket ini(0x01, 0x00, 0x01, 0x03, 0x05);
+    C328CommandPacket ini(0x01, 0x00, static_cast<uint8_t>(ct),
+                          static_cast<uint8_t>(pr),
+                          static_cast<uint8_t>(jr));
     if (!write_pkt(ini))
         return;
 
@@ -228,12 +258,12 @@ void C328::initial()
     }
 }
 
+// hardcoded for 512 bytes
 void C328::set_pkg_size()
 {
     if (_serial_port < 0)
         return;
 
-    // data package size = 512b
     C328CommandPacket setpkgsize(0x06, 0x08, 0x00, 0x02, 0x00);
     if (!write_pkt(setpkgsize))
         return;
@@ -247,12 +277,12 @@ void C328::set_pkg_size()
     }
 }
 
-void C328::snapshot()
+void C328::snapshot(enum SnapshotType st)
 {
     if (_serial_port < 0)
         return;
 
-    C328CommandPacket snap(0x05, 0x00, 0x00, 0x00, 0x00);
+    C328CommandPacket snap(0x05, static_cast<uint8_t>(st), 0x00, 0x00, 0x00);
     // loop until camera succesfully takes snapshot
     while (true)
     {
@@ -271,9 +301,9 @@ void C328::snapshot()
         {
             struct NakFields nf;
             retpkt.nak_fields(&nf);
-            if (nf.err == 0x0f)
+            if (nf.errcode == 0x0f)
                 continue;
-            cerr << "Camera responded to snapshot with error: " << nf.err << endl;
+            cerr << "Camera snapshot error[" << nf.errcode << "] :" << retpkt.nak_error() << endl;
         }
         if (retpkt.is_ack())
             break;
@@ -286,7 +316,7 @@ void C328::snapshot()
     }
 }
 
-void C328::get_picture(uint8_t* pixtype, uint32_t* datasz)
+void C328::get_picture(enum PictureType pt, uint8_t* pixtype, uint32_t* datasz)
 {
     if (_serial_port < 0)
         return;
@@ -294,7 +324,7 @@ void C328::get_picture(uint8_t* pixtype, uint32_t* datasz)
     *pixtype = 0;
     *datasz = 0;
     
-    C328CommandPacket gpix(0x04, 0x01, 0x00, 0x00, 0x00);
+    C328CommandPacket gpix(0x04, static_cast<uint8_t>(pt), 0x00, 0x00, 0x00);
     while (true)
     {
         // loop until camera is ready to return picture
@@ -315,9 +345,9 @@ void C328::get_picture(uint8_t* pixtype, uint32_t* datasz)
             {
                 struct NakFields nf;
                 retpkt.nak_fields(&nf);
-                if (nf.err == 0x0f)
+                if (nf.errcode == 0x0f) // picture not ready error
                     continue;
-                cerr << "Camera responded to get picture with error: " << nf.err << endl;
+                cerr << "Camera get picture error[" << nf.errcode << "] :" << retpkt.nak_error() << endl;
             }
             if (retpkt.is_ack())
                 break;
@@ -347,7 +377,7 @@ void C328::get_picture(uint8_t* pixtype, uint32_t* datasz)
         {
             struct NakFields nf;
             datval.first.nak_fields(&nf);
-            cerr << "Camera sent error " << nf.err << " instead of data during snapshot" << endl;
+            cerr << "Camera error[" << nf.errcode << "] snapshot: " << datval.first.nak_error() << endl;
             return;
         }
         if(usleep(10000) != 0)
@@ -409,6 +439,21 @@ void C328::get_data_packages(uint32_t datasz, uint8_t* pixbuf)
     write_pkt(ack);
 }
 
+void C328::get_image_data(uint32_t datasz, uint8_t* pixbuf)
+{
+    if (_serial_port < 0)
+        return;
+
+    if (!read_bytes(pixbuf, datasz))
+    {
+        cerr << "Error while reading image data" << endl;
+        return;
+    }
+    // send final ack
+    C328CommandPacket ack(0x0E, 0x0A, 0x00, 0x00, 0x00);
+    write_pkt(ack);
+}
+
 bool C328::is_connected() const
 {
     return _serial_port >= 0 && _is_sync;
@@ -416,12 +461,12 @@ bool C328::is_connected() const
 
 std::pair<uint32_t, uint8_t*> C328::jpeg_snapshot()
 {
-    snapshot();
+    snapshot(Compressed);
 
     uint8_t pixtype;
     uint32_t datasz;
 
-    get_picture(&pixtype, &datasz);
+    get_picture(Snapshot, &pixtype, &datasz);
     if (pixtype == 0)
     {
         std::cerr << "Error during get picture\n";
@@ -439,15 +484,65 @@ std::pair<uint32_t, uint8_t*> C328::jpeg_snapshot()
 
 std::pair<uint32_t, uint8_t*> C328::uncompressed_snapshot()
 {
-    return make_pair(0, nullptr);
+    snapshot(Uncompressed);
+
+    uint8_t pixtype;
+    uint32_t datasz;
+
+    get_picture(Snapshot, &pixtype, &datasz);
+    if (pixtype == 0)
+    {
+        std::cerr << "Error during get picture\n";
+        return make_pair(0, nullptr);
+    }
+    //std::cerr << "Pixtype: " << static_cast<int>(pixtype) << " size: " << datasz << std::endl;
+
+    // allocate a buffer to hold the pix
+    uint8_t* pixbuf = new uint8_t[datasz];
+
+    get_image_data(datasz, pixbuf);
+    
+    return make_pair(datasz, pixbuf);
 }
 
 std::pair<uint32_t, uint8_t*> C328::jpeg_preview()
 {
+    uint8_t pixtype;
+    uint32_t datasz;
+
+    get_picture(JpegPreview, &pixtype, &datasz);
+    if (pixtype == 0)
+    {
+        std::cerr << "Error during get picture\n";
+        return make_pair(0, nullptr);
+    }
+    //std::cerr << "Pixtype: " << static_cast<int>(pixtype) << " size: " << datasz << std::endl;
+
+    // allocate a buffer to hold the pix
+    uint8_t* pixbuf = new uint8_t[datasz];
+
+    get_data_packages(datasz, pixbuf);
+    
     return make_pair(0, nullptr);
 }
 
 std::pair<uint32_t, uint8_t*> C328::uncompressed_preview()
 {
-    return make_pair(0, nullptr);
+    uint8_t pixtype;
+    uint32_t datasz;
+
+    get_picture(Preview, &pixtype, &datasz);
+    if (pixtype == 0)
+    {
+        std::cerr << "Error during get picture\n";
+        return make_pair(0, nullptr);
+    }
+    //std::cerr << "Pixtype: " << static_cast<int>(pixtype) << " size: " << datasz << std::endl;
+
+    // allocate a buffer to hold the pix
+    uint8_t* pixbuf = new uint8_t[datasz];
+
+    get_image_data(datasz, pixbuf);
+    
+    return make_pair(datasz, pixbuf);
 }

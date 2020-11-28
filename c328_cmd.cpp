@@ -49,7 +49,7 @@ void C328CommandPacket::ack_fields(struct AckFields* fld) const
 void C328CommandPacket::nak_fields(struct NakFields* fld) const
 {
     fld->counter = _data[3];
-    fld->err = static_cast<enum C328Errors>(_data[4]);
+    fld->errcode = _data[4];
 }
 
 void C328CommandPacket::data_fields(struct DataFields* fld) const
@@ -62,4 +62,44 @@ void C328CommandPacket::debug(bool dir) const
 {
     fprintf(stderr, "%s %02x %02x %02x %02x %02x %02x\n", dir ? "->" : "<-",
             _data[0], _data[1], _data[2], _data[3], _data[4], _data[5]);
+}
+
+struct err_to_msg 
+{
+    uint8_t errcode;
+    std::string errmsg;
+};
+
+const struct err_to_msg nak_errs[] = {
+    {0x00, "Not a known NAK errorcode, or not a NAK reply, no error message available"},
+    {0x01, "Picture Type Error"},
+    {0x02, "Picture Up Scale"},
+    {0x03, "Picture Scale Error"},
+    {0x04, "Unexpected Reply"},
+    {0x05, "Send Picture Timeout"},
+    {0x06, "Unexpected Command"},
+    {0x07, "SRAM JPEG Type Error"},
+    {0x08, "SRAM JPEG Size Error"},
+    {0x09, "Picture Format Error"},
+    {0x0A, "Picture Size Error"},
+    {0x0B, "Parameter Error"},
+    {0x0C, "Send Register Timeout"},
+    {0x0D, "Command ID Error"},
+    {0x0F, "Picture Not Ready"},
+    {0x10, "Transfer Package Number Error"},
+    {0x11, "Set Transfer Package Size Wrong"},
+    {0xF0, "Command Header Error"},
+    {0xF1, "Command Length Error"},
+    {0xF5, "Send Picture Error"},
+    {0xFF, "Send Command Error"},
+};
+
+const std::string& C328CommandPacket::nak_error() const
+{
+    if (is_nak()) {
+        for (size_t i=0; i<sizeof(nak_errs); i++)
+            if (nak_errs[1].errcode == _data[4])
+                return nak_errs[i].errmsg;
+    }
+    return nak_errs[0].errmsg;
 }

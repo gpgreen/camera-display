@@ -2,29 +2,7 @@
 #define C328_CMD_H_
 
 #include <cstdint>
-
-enum C328Errors {
-    PictureTypeError = 0,
-    PictureUpScale,
-    PictureScaleError,
-    UnexpectedReply,
-    SendPictureTimeout,
-    UnexpectedCommand,
-    SRAMJPEGTypeError,
-    SRAMJPEGSizeError,
-    PictureFormatError,
-    PictureSizeError,
-    ParameterError,
-    SendRegisterTimeout,
-    CommandIDError,
-    PictureNotReady,
-    TransferPackageNumberError,
-    SetTransferPackageSizeWrong,
-    CommandHeaderError,
-    CommandLengthError,
-    SendPictureError,
-    SendCommandError
-};
+#include <string>
 
 struct AckFields
 {
@@ -36,7 +14,7 @@ struct AckFields
 struct NakFields
 {
     uint8_t counter;
-    enum C328Errors err;
+    uint8_t errcode;
 };
 
 struct DataFields
@@ -66,6 +44,8 @@ public:
 
     // dump to std::err, dir is True for write
     void debug(bool dir) const;
+
+    const std::string& nak_error() const;
     
 private:
     uint8_t _data[6];
