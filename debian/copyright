@@ -1,0 +1,9 @@
+The Debian packaging is Copyright  2020, Greg Green <ggreen@bit-builder.com>,
+is licensed under the terms of the GNU GPL version 3.
+
+camera_display Software is distributed under GNU GPL v3
+The text of the license can be found in /usr/share/common-licenses/GPL-3
+
+Copyright (C) 2020 Greg Green - http://www.bit-builder.com
+
+Upstream source: http://www.github.com/gpgreen/camera_display

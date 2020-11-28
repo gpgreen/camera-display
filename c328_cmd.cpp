@@ -1,5 +1,6 @@
 #include "c328_cmd.h"
 #include <cstring>
+#include <cstdio>
 
 using namespace std;
 
@@ -47,3 +48,8 @@ void C328CommandPacket::data_fields(struct DataFields* fld) const
     fld->datasz = (_data[5] << 16) | (_data[4] << 8) | _data[3];
 }
 
+void C328CommandPacket::debug(bool dir) const
+{
+    fprintf(stderr, "%s %02x %02x %02x %02x %02x %02x\n", dir ? "->" : "<-",
+            _data[0], _data[1], _data[2], _data[3], _data[4], _data[5]);
+}

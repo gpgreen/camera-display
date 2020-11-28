@@ -1,0 +1,15 @@
+Source: camera-display
+Section: misc
+Priority: optional
+Maintainer: Greg Green <ggreen@bit-builder.com>
+Build-Depends: debhelper (>= 9),cmake
+Standards-Version: 3.9.8
+Homepage: https://github.com/gpgreen/camera_display.git
+#Vcs-Git: https://anonscm.debian.org/collab-maint/xygrib.git
+#Vcs-Browser: https://anonscm.debian.org/cgit/collab-maint/xygrib.git
+
+Package: camera-display
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Utility that captures image data from a C328 camera
+ camera_display captures image's from a C328 serial port camera and displays it. The XyGrib software is released as open source under the GPLv3 License.

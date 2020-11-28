@@ -1,0 +1,5 @@
+camera-display (0.0.1-1) unstable; urgency=medium
+
+  * Initial release (Closes: #nnnn)  <nnnn is the bug number of your ITP>
+
+ -- Greg Green <ggreen@bit-builder.com>  Fri, 26 Nov 2020 11:13:15 -0800

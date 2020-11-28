@@ -62,6 +62,9 @@ public:
     void ack_fields(struct AckFields* fld) const;
     void nak_fields(struct NakFields* fld) const;
     void data_fields(struct DataFields* fld) const;
+
+    // dump to std::err, dir is True for write
+    void debug(bool dir) const;
     
 private:
     uint8_t _data[6];
