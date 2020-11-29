@@ -44,7 +44,7 @@ enum PictureType {
 class C328
 {
 public:
-    explicit C328(const std::string& serport);
+    explicit C328(const std::string& serport, const std::string& baudrate);
     ~C328();
 
     // non-hdwr methods
@@ -52,12 +52,12 @@ public:
     bool is_connected() const;
 
     // hdwr commands
-    void initial(enum ColorType ct, enum PreviewResolution pr, enum JPEGResolution jr);
+    bool initial(enum ColorType ct, enum PreviewResolution pr, enum JPEGResolution jr);
     void power_off();
     void reset(bool state_only);
     void sync();
-    void set_pkg_size();
-    void snapshot(enum SnapshotType st);
+    bool set_pkg_size();
+    bool snapshot(enum SnapshotType st);
     void get_picture(enum PictureType pt, uint8_t* pixtype, uint32_t* datasz);
     void get_data_packages(uint32_t datasz, uint8_t* pixbuf);
     void get_image_data(uint32_t datasz, uint8_t* pixbuf);

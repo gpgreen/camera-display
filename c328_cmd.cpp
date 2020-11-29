@@ -98,7 +98,7 @@ const std::string& C328CommandPacket::nak_error() const
 {
     if (is_nak()) {
         for (size_t i=0; i<sizeof(nak_errs); i++)
-            if (nak_errs[1].errcode == _data[4])
+            if (nak_errs[i].errcode == _data[4])
                 return nak_errs[i].errmsg;
     }
     return nak_errs[0].errmsg;

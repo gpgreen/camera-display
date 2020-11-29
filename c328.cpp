@@ -10,9 +10,22 @@
 
 using namespace std;
 
-C328::C328(const string& serport)
+C328::C328(const string& serport, const string& baudrate)
     : _serial_port(-1), _is_sync(false), _debug(false)
 {
+    auto baud = B9600;
+    
+    // check baudrate
+    if (baudrate == "19200")
+        baud = B19200;
+    else if (baudrate == "38400")
+        baud = B38400;
+    else if (baudrate == "57600")
+        baud = B57600;
+    else if (baudrate == "115200")
+        baud = B115200;
+    cerr << "Baudrate: " << baudrate << endl;
+    
     _serial_port = open(serport.c_str(), O_RDWR);
     if (_serial_port < 0)
     {
@@ -50,8 +63,8 @@ C328::C328(const string& serport)
     tty.c_cc[VTIME] = 0;
 
     // baud rate
-    cfsetispeed(&tty, B115200);
-    cfsetospeed(&tty, B115200);
+    cfsetispeed(&tty, baud);
+    cfsetospeed(&tty, baud);
 
     // save tty settings
     if (tcsetattr(_serial_port, TCSANOW, &tty) != 0)
@@ -63,7 +76,7 @@ C328::C328(const string& serport)
     }
     
     // finished
-    cerr << "Opened serial port '" << serport.c_str() << "' set to 115200 baud" << endl;
+    cerr << "Opened serial port '" << serport.c_str() << "' at " << baudrate << " baud" << endl;
 }
 
 C328::~C328()
@@ -143,7 +156,9 @@ bool C328::has_recvd_bytes() const
     timeout.tv_sec = 0;
     timeout.tv_usec = 0;
 
-    return (select(_serial_port + 1, &readfds, NULL, NULL, &timeout) == 1);
+    int retval = select(_serial_port + 1, &readfds, NULL, NULL, &timeout);
+    // cerr << "select: " << retval << endl;
+    return retval == 1;
 }
 
 // implements basic pattern, where a command is sent and an ack is received
@@ -151,23 +166,41 @@ bool C328::command_response(const C328CommandPacket& cmdpkt)
 {
     if (_serial_port < 0)
         return false;
+
+    uint8_t commandid = cmdpkt.packet()[1];
+    
     if (!write_pkt(cmdpkt))
         return false;
     // read the reply
     auto ackval = read_pkt();
     if (!ackval.second)
     {
-        cerr << "Camera did not ack packet" << endl;
+        cerr << "Camera did not ack" << endl;
         return false;
     }
-    else if (!ackval.first.is_ack() && ackval.first.is_nak())
+    else if (!ackval.first.is_ack())
     {
-        struct NakFields nf;
-        ackval.first.nak_fields(&nf);
-        cerr << "Camera error[" << nf.errcode << "] :" << ackval.first.nak_error() << endl;
+        if (ackval.first.is_nak())
+        {
+            struct NakFields nf;
+            ackval.first.nak_fields(&nf);
+            cerr << "Camera error command " << static_cast<int>(commandid)
+                 << " [" << static_cast<int>(nf.errcode)
+             << "]: " << ackval.first.nak_error() << endl;
+        }
+        else if(ackval.first.is_sync())
+        {
+            cerr << "Camera responded with sync for command "
+                 << static_cast<int>(commandid) << endl;
+        }
         return false;
     }
-    
+    else if (ackval.first.packet()[2] != commandid)
+    {
+        cerr << "Camera responded with different commandid " << static_cast<int>(ackval.first.packet()[2])
+             << " instead of " << static_cast<int>(commandid) << endl;
+        return false;
+    }
     return true;
 }
 
@@ -211,9 +244,17 @@ void C328::sync()
     }
     // read the reply
     auto ackval = read_pkt();
-    if (!ackval.second || !ackval.first.is_ack())
+    if (!ackval.second)
     {
         cerr << "Camera did not send ack packet" << endl;
+        return;
+    }
+    else if (!ackval.first.is_ack() && ackval.first.is_nak())
+    {
+        struct NakFields nf;
+        ackval.first.nak_fields(&nf);
+        cerr << "Camera error[" << static_cast<int>(nf.errcode)
+             << "]: " << ackval.first.nak_error() << endl;
         return;
     }
     // now read the sync
@@ -223,8 +264,8 @@ void C328::sync()
         cerr << "Camera did not send sync packet" << endl;
         return;
     }
-    // ack the sync
-    C328CommandPacket ack(0x0E, 0x0D, ackval.first.packet()[3], 0x00, 0x00);
+    // ack the ack
+    C328CommandPacket ack(0x0E, 0x0D, 0x00, 0x00, 0x00);
     if (!write_pkt(ack))
         return;
     _is_sync = true;
@@ -232,88 +273,42 @@ void C328::sync()
     // sleep for 2s to let camera stabilize
     if (usleep(2000000) != 0)
     {
-        cerr << "Error " << errno << " during sleep: " << strerror(errno) << endl;
+        cerr << "Error " << static_cast<int>(errno) << " during sleep: " << strerror(errno) << endl;
         close_port();
         return;
     }
 }
 
-void C328::initial(enum ColorType ct, enum PreviewResolution pr, enum JPEGResolution jr)
+bool C328::initial(enum ColorType ct, enum PreviewResolution pr, enum JPEGResolution jr)
 {
-    if (_serial_port < 0)
-        return;
-
     C328CommandPacket ini(0x01, 0x00, static_cast<uint8_t>(ct),
                           static_cast<uint8_t>(pr),
                           static_cast<uint8_t>(jr));
-    if (!write_pkt(ini))
-        return;
-
-    // read the reply
-    auto ackval = read_pkt();
-    if (!ackval.second || !ackval.first.is_ack())
-    {
-        cerr << "Camera did not ack initial command" << endl;
-        return;
-    }
+    return command_response(ini);
 }
 
 // hardcoded for 512 bytes
-void C328::set_pkg_size()
+bool C328::set_pkg_size()
 {
-    if (_serial_port < 0)
-        return;
-
     C328CommandPacket setpkgsize(0x06, 0x08, 0x00, 0x02, 0x00);
-    if (!write_pkt(setpkgsize))
-        return;
-
-    // read the reply
-    auto ackval = read_pkt();
-    if (!ackval.second || !ackval.first.is_ack())
-    {
-        cerr << "Camera did not ack set package size command" << endl;
-        return;
-    }
+    return command_response(setpkgsize);
 }
 
-void C328::snapshot(enum SnapshotType st)
+bool C328::snapshot(enum SnapshotType st)
 {
-    if (_serial_port < 0)
-        return;
-
     C328CommandPacket snap(0x05, static_cast<uint8_t>(st), 0x00, 0x00, 0x00);
-    // loop until camera succesfully takes snapshot
-    while (true)
+    bool response = false;
+    for (int i=0; i<5 && !response; i++)
     {
-        if (!write_pkt(snap))
-            return;
-
-        // read the reply
-        auto ackval = read_pkt();
-        auto retpkt = ackval.first;
-        if (!ackval.second)
-        {
-            cerr << "Camera failed to respond to snapshot command" << endl;
-                return;
-        }
-        if (retpkt.is_nak())
-        {
-            struct NakFields nf;
-            retpkt.nak_fields(&nf);
-            if (nf.errcode == 0x0f)
-                continue;
-            cerr << "Camera snapshot error[" << nf.errcode << "] :" << retpkt.nak_error() << endl;
-        }
-        if (retpkt.is_ack())
-            break;
+        response = command_response(snap);
         if(usleep(10000) != 0)
         {
             cerr << "Error " << errno << " during sleep: " << strerror(errno) << endl;
             close_port();
-            return;
+            return false;
         }
     }
+    return response;
 }
 
 void C328::get_picture(enum PictureType pt, uint8_t* pixtype, uint32_t* datasz)
@@ -347,7 +342,8 @@ void C328::get_picture(enum PictureType pt, uint8_t* pixtype, uint32_t* datasz)
                 retpkt.nak_fields(&nf);
                 if (nf.errcode == 0x0f) // picture not ready error
                     continue;
-                cerr << "Camera get picture error[" << nf.errcode << "] :" << retpkt.nak_error() << endl;
+                cerr << "Camera get picture error[" << static_cast<int>(nf.errcode)
+                     << "]: " << retpkt.nak_error() << endl;
             }
             if (retpkt.is_ack())
                 break;
@@ -377,7 +373,8 @@ void C328::get_picture(enum PictureType pt, uint8_t* pixtype, uint32_t* datasz)
         {
             struct NakFields nf;
             datval.first.nak_fields(&nf);
-            cerr << "Camera error[" << nf.errcode << "] snapshot: " << datval.first.nak_error() << endl;
+            cerr << "Camera error[" << static_cast<int>(nf.errcode)
+                 << "] snapshot: " << datval.first.nak_error() << endl;
             return;
         }
         if(usleep(10000) != 0)
@@ -433,6 +430,13 @@ void C328::get_data_packages(uint32_t datasz, uint8_t* pixbuf)
         if (bytecount >= datasz)
             break;
         count++;
+        // put in a short sleep after each package
+        if(usleep(1000) != 0)
+        {
+            cerr << "Error " << errno << " during sleep: " << strerror(errno) << endl;
+            close_port();
+            return;
+        }
     }
     // send final ack
     C328CommandPacket ack(0x0E, 0x00, 0x00, 0xF0, 0xF0);
@@ -461,7 +465,8 @@ bool C328::is_connected() const
 
 std::pair<uint32_t, uint8_t*> C328::jpeg_snapshot()
 {
-    snapshot(Compressed);
+    if (!snapshot(Compressed))
+        return make_pair(0, nullptr);
 
     uint8_t pixtype;
     uint32_t datasz;
