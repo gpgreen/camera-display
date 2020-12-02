@@ -5,18 +5,32 @@ set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall")
 
-set(CAMERA_DISPLAY_HDRS
+set(CAMERA_DEV_HDRS
 	c328.h
 	c328_cmd.h
 )
 
-set(CAMERA_DISPLAY_SRCS
+set(CAMERA_DEV_SRCS
 	c328.cpp
 	c328_cmd.cpp
-	test_camera.cpp
 )
 
+set(CAMERA_GUI_HDRS
+#	canvas.h
+)
 
-add_executable(${CMAKE_PROJECT_NAME} ${CAMERA_DISPLAY_SRCS})
+set(CAMERA_GUI_SRCS
+#	canvas.cpp
+	main.cpp
+)
+
+find_package(wxWidgets REQUIRED COMPONENTS net core base)
+include(${wxWidgets_USE_FILE})
+
+add_executable(${CMAKE_PROJECT_NAME} ${CAMERA_DEV_SRCS} ${CAMERA_GUI_SRCS})
+target_link_libraries(${CMAKE_PROJECT_NAME} ${wxWidgets_LIBRARIES})
+
+add_executable(test_c328camera ${CAMERA_DEV_SRCS} test_camera.cpp)
 
 install(TARGETS ${CMAKE_PROJECT_NAME} DESTINATION bin)
+install(TARGETS test_c328camera DESTINATION bin)

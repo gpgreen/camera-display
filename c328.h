@@ -53,8 +53,8 @@ public:
 
     // hdwr commands
     bool initial(enum ColorType ct, enum PreviewResolution pr, enum JPEGResolution jr);
-    void power_off();
-    void reset(bool state_only);
+    bool power_off();
+    bool reset(bool state_only);
     void sync();
     bool set_pkg_size();
     bool snapshot(enum SnapshotType st);

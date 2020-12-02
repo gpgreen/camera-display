@@ -85,8 +85,12 @@ int main(int argc, char* argv[])
                 std::cerr << "Error " << errno << " during write of file: " << strerror(errno) << std::endl;
             }
             fclose(f);
-        
+            std::cerr << "Image written to file: '" << fname << "'" << std::endl;
+            
             delete [] result.second;
+
+            // sleep a bit between snaps
+            usleep(20000);
         }
         return 0;
     }
